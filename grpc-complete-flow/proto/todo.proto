@@ -2,13 +2,20 @@ syntax = "proto3";
 
 package todo;
 
-// Specifies the Go package path where the generated code will live
 option go_package = "github.com/MRNaveed-stack/rpc-gRPC--practice-with-projects/proto/pb";
 
 service TodoService {
+  // 1. Unary
   rpc CreateTask (CreateTaskRequest) returns (CreateTaskResponse);
-  rpc GetTask (GetTaskRequest) returns (Task);
-  rpc ListTasks (ListTasksRequest) returns (ListTasksResponse);
+
+  // 2. Server Streaming
+  rpc StreamTasks (StreamTasksRequest) returns (stream Task);
+
+  // 3. Client Streaming
+  rpc UploadTasks (stream CreateTaskRequest) returns (UploadTasksSummary);
+
+  // 4. Bidirectional Streaming
+  rpc TaskChat (stream ChatMessage) returns (stream ChatMessage);
 }
 
 message Task {
@@ -27,12 +34,16 @@ message CreateTaskResponse {
   Task task = 1;
 }
 
-message GetTaskRequest {
-  string id = 1;
+message StreamTasksRequest {
+  bool incomplete_only = 1;
 }
 
-message ListTasksRequest {}
+message UploadTasksSummary {
+  int32 total_created = 1;
+  repeated string task_ids = 2;
+}
 
-message ListTasksResponse {
-  repeated Task tasks = 1;
+message ChatMessage {
+  string user = 1;
+  string message = 2;
 }

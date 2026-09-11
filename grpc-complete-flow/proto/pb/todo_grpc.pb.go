@@ -19,18 +19,24 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	TodoService_CreateTask_FullMethodName = "/todo.TodoService/CreateTask"
-	TodoService_GetTask_FullMethodName    = "/todo.TodoService/GetTask"
-	TodoService_ListTasks_FullMethodName  = "/todo.TodoService/ListTasks"
+	TodoService_CreateTask_FullMethodName  = "/todo.TodoService/CreateTask"
+	TodoService_StreamTasks_FullMethodName = "/todo.TodoService/StreamTasks"
+	TodoService_UploadTasks_FullMethodName = "/todo.TodoService/UploadTasks"
+	TodoService_TaskChat_FullMethodName    = "/todo.TodoService/TaskChat"
 )
 
 // TodoServiceClient is the client API for TodoService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type TodoServiceClient interface {
+	// 1. Unary
 	CreateTask(ctx context.Context, in *CreateTaskRequest, opts ...grpc.CallOption) (*CreateTaskResponse, error)
-	GetTask(ctx context.Context, in *GetTaskRequest, opts ...grpc.CallOption) (*Task, error)
-	ListTasks(ctx context.Context, in *ListTasksRequest, opts ...grpc.CallOption) (*ListTasksResponse, error)
+	// 2. Server Streaming
+	StreamTasks(ctx context.Context, in *StreamTasksRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Task], error)
+	// 3. Client Streaming
+	UploadTasks(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[CreateTaskRequest, UploadTasksSummary], error)
+	// 4. Bidirectional Streaming
+	TaskChat(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ChatMessage, ChatMessage], error)
 }
 
 type todoServiceClient struct {
@@ -51,33 +57,63 @@ func (c *todoServiceClient) CreateTask(ctx context.Context, in *CreateTaskReques
 	return out, nil
 }
 
-func (c *todoServiceClient) GetTask(ctx context.Context, in *GetTaskRequest, opts ...grpc.CallOption) (*Task, error) {
+func (c *todoServiceClient) StreamTasks(ctx context.Context, in *StreamTasksRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Task], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(Task)
-	err := c.cc.Invoke(ctx, TodoService_GetTask_FullMethodName, in, out, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &TodoService_ServiceDesc.Streams[0], TodoService_StreamTasks_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	return out, nil
+	x := &grpc.GenericClientStream[StreamTasksRequest, Task]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
 }
 
-func (c *todoServiceClient) ListTasks(ctx context.Context, in *ListTasksRequest, opts ...grpc.CallOption) (*ListTasksResponse, error) {
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type TodoService_StreamTasksClient = grpc.ServerStreamingClient[Task]
+
+func (c *todoServiceClient) UploadTasks(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[CreateTaskRequest, UploadTasksSummary], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ListTasksResponse)
-	err := c.cc.Invoke(ctx, TodoService_ListTasks_FullMethodName, in, out, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &TodoService_ServiceDesc.Streams[1], TodoService_UploadTasks_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	return out, nil
+	x := &grpc.GenericClientStream[CreateTaskRequest, UploadTasksSummary]{ClientStream: stream}
+	return x, nil
 }
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type TodoService_UploadTasksClient = grpc.ClientStreamingClient[CreateTaskRequest, UploadTasksSummary]
+
+func (c *todoServiceClient) TaskChat(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ChatMessage, ChatMessage], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &TodoService_ServiceDesc.Streams[2], TodoService_TaskChat_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[ChatMessage, ChatMessage]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type TodoService_TaskChatClient = grpc.BidiStreamingClient[ChatMessage, ChatMessage]
 
 // TodoServiceServer is the server API for TodoService service.
 // All implementations must embed UnimplementedTodoServiceServer
 // for forward compatibility.
 type TodoServiceServer interface {
+	// 1. Unary
 	CreateTask(context.Context, *CreateTaskRequest) (*CreateTaskResponse, error)
-	GetTask(context.Context, *GetTaskRequest) (*Task, error)
-	ListTasks(context.Context, *ListTasksRequest) (*ListTasksResponse, error)
+	// 2. Server Streaming
+	StreamTasks(*StreamTasksRequest, grpc.ServerStreamingServer[Task]) error
+	// 3. Client Streaming
+	UploadTasks(grpc.ClientStreamingServer[CreateTaskRequest, UploadTasksSummary]) error
+	// 4. Bidirectional Streaming
+	TaskChat(grpc.BidiStreamingServer[ChatMessage, ChatMessage]) error
 	mustEmbedUnimplementedTodoServiceServer()
 }
 
@@ -91,11 +127,14 @@ type UnimplementedTodoServiceServer struct{}
 func (UnimplementedTodoServiceServer) CreateTask(context.Context, *CreateTaskRequest) (*CreateTaskResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateTask not implemented")
 }
-func (UnimplementedTodoServiceServer) GetTask(context.Context, *GetTaskRequest) (*Task, error) {
-	return nil, status.Error(codes.Unimplemented, "method GetTask not implemented")
+func (UnimplementedTodoServiceServer) StreamTasks(*StreamTasksRequest, grpc.ServerStreamingServer[Task]) error {
+	return status.Error(codes.Unimplemented, "method StreamTasks not implemented")
 }
-func (UnimplementedTodoServiceServer) ListTasks(context.Context, *ListTasksRequest) (*ListTasksResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method ListTasks not implemented")
+func (UnimplementedTodoServiceServer) UploadTasks(grpc.ClientStreamingServer[CreateTaskRequest, UploadTasksSummary]) error {
+	return status.Error(codes.Unimplemented, "method UploadTasks not implemented")
+}
+func (UnimplementedTodoServiceServer) TaskChat(grpc.BidiStreamingServer[ChatMessage, ChatMessage]) error {
+	return status.Error(codes.Unimplemented, "method TaskChat not implemented")
 }
 func (UnimplementedTodoServiceServer) mustEmbedUnimplementedTodoServiceServer() {}
 func (UnimplementedTodoServiceServer) testEmbeddedByValue()                     {}
@@ -136,41 +175,30 @@ func _TodoService_CreateTask_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
-func _TodoService_GetTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetTaskRequest)
-	if err := dec(in); err != nil {
-		return nil, err
+func _TodoService_StreamTasks_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(StreamTasksRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
 	}
-	if interceptor == nil {
-		return srv.(TodoServiceServer).GetTask(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: TodoService_GetTask_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(TodoServiceServer).GetTask(ctx, req.(*GetTaskRequest))
-	}
-	return interceptor(ctx, in, info, handler)
+	return srv.(TodoServiceServer).StreamTasks(m, &grpc.GenericServerStream[StreamTasksRequest, Task]{ServerStream: stream})
 }
 
-func _TodoService_ListTasks_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ListTasksRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(TodoServiceServer).ListTasks(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: TodoService_ListTasks_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(TodoServiceServer).ListTasks(ctx, req.(*ListTasksRequest))
-	}
-	return interceptor(ctx, in, info, handler)
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type TodoService_StreamTasksServer = grpc.ServerStreamingServer[Task]
+
+func _TodoService_UploadTasks_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(TodoServiceServer).UploadTasks(&grpc.GenericServerStream[CreateTaskRequest, UploadTasksSummary]{ServerStream: stream})
 }
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type TodoService_UploadTasksServer = grpc.ClientStreamingServer[CreateTaskRequest, UploadTasksSummary]
+
+func _TodoService_TaskChat_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(TodoServiceServer).TaskChat(&grpc.GenericServerStream[ChatMessage, ChatMessage]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type TodoService_TaskChatServer = grpc.BidiStreamingServer[ChatMessage, ChatMessage]
 
 // TodoService_ServiceDesc is the grpc.ServiceDesc for TodoService service.
 // It's only intended for direct use with grpc.RegisterService,
@@ -183,15 +211,24 @@ var TodoService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "CreateTask",
 			Handler:    _TodoService_CreateTask_Handler,
 		},
+	},
+	Streams: []grpc.StreamDesc{
 		{
-			MethodName: "GetTask",
-			Handler:    _TodoService_GetTask_Handler,
+			StreamName:    "StreamTasks",
+			Handler:       _TodoService_StreamTasks_Handler,
+			ServerStreams: true,
 		},
 		{
-			MethodName: "ListTasks",
-			Handler:    _TodoService_ListTasks_Handler,
+			StreamName:    "UploadTasks",
+			Handler:       _TodoService_UploadTasks_Handler,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "TaskChat",
+			Handler:       _TodoService_TaskChat_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
 	Metadata: "todo.proto",
 }
