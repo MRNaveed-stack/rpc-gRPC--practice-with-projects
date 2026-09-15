@@ -47,3 +47,6 @@ message ChatMessage {
   string user = 1;
   string message = 2;
 }
+
+
+

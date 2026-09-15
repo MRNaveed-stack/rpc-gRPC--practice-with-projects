@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 	"io"
 	"log"
 	"net"
@@ -13,7 +14,9 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/grpc/metadata"
 )
+
 
 type server struct {
 	pb.UnimplementedTodoServiceServer
@@ -21,6 +24,7 @@ type server struct {
 	tasks map[string]*pb.Task
 	count int
 }
+
 
 // 1. Unary RPC
 func (s *server) CreateTask(ctx context.Context, req *pb.CreateTaskRequest) (*pb.CreateTaskResponse, error) {
@@ -44,6 +48,53 @@ func (s *server) CreateTask(ctx context.Context, req *pb.CreateTaskRequest) (*pb
 	log.Printf("[Unary] Created: %s (%s)", id, task.Title)
 	return &pb.CreateTaskResponse{Task: task}, nil
 }
+
+// First Interceptor: Logging, Timing & Panic Recovery
+func LoggingInterceptor(
+	ctx context.Context,
+	req any,
+	info *grpc.UnaryServerInfo,
+	handler grpc.UnaryHandler,
+) (resp any, err error) {
+	start := time.Now()
+    defer func() {if r:= recover(); r!= nil {
+		log.Printf("[Panic Recovered] Method: %s | Error: %v", info.FullMethod,r)
+		err = status.Errorf(codes.Internal," internal server error")
+	}}()
+	log.Printf("[REQ Start] Method: %s", info.FullMethod)
+	resp, err = handler(ctx,req)
+	duration := time.Since(start)
+	if err != nil{
+		log.Printf("[REQ Failed] Method: %s | Duration: %v | Error: %v", info.FullMethod,duration,err)
+	} else {
+		log.Printf("[REQ Success] Method: %s | Duration: %v", info.FullMethod,duration)
+	}
+	return resp,err
+}
+
+func AuthInterceptor(
+	ctx context.Context,
+	req any,
+	info *grpc.UnaryServerInfo,
+	handler grpc.UnaryHandler,
+) (any, error) {
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil , status.Errorf(codes.Unauthenticated, "missing metadata headers")
+	}
+	authHeaders := md.Get("authorization")
+	if len(authHeaders) == 0 {
+		return nil, status.Errorf(codes.Unauthenticated, "authorization token required")
+	}
+	token := authHeaders[0]
+	expectedToken := "Bearer secret-vault-token-123"
+	if !strings.EqualFold(token,expectedToken) {
+		return nil,status.Errorf(codes.PermissionDenied,"invalid token provided")
+
+	}
+	return handler(ctx,req)
+}
+
 
 // 2. Server Streaming RPC
 func (s *server) StreamTasks(req *pb.StreamTasksRequest, stream pb.TodoService_StreamTasksServer) error {
@@ -132,7 +183,12 @@ func main() {
 		log.Fatalf("Failed to listen: %v", err)
 	}
 
-	grpcServer := grpc.NewServer()
+	grpcServer := grpc.NewServer(
+	grpc.ChainUnaryInterceptor(
+		LoggingInterceptor,
+		AuthInterceptor,
+	),
+	)
 	s := &server{
 		tasks: make(map[string]*pb.Task),
 	}
