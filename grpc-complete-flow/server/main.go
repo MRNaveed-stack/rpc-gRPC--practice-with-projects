@@ -3,20 +3,19 @@ package main
 import (
 	"context"
 	"fmt"
-	"strings"
 	"io"
 	"log"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
 	pb "github.com/MRNaveed-stack/rpc-gRPC--practice-with-projects/proto/pb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 )
-
 
 type server struct {
 	pb.UnimplementedTodoServiceServer
@@ -25,28 +24,44 @@ type server struct {
 	count int
 }
 
-
 // 1. Unary RPC
 func (s *server) CreateTask(ctx context.Context, req *pb.CreateTaskRequest) (*pb.CreateTaskResponse, error) {
-	if req.GetTitle() == "" {
-		return nil, status.Errorf(codes.InvalidArgument, "task title cannot be empty")
+	workDone := make(chan struct{})
+	go func() {
+		time.Sleep(3 * time.Second)
+		close(workDone)
+	}()
+
+	select {
+	case <-ctx.Done():
+		err := ctx.Err()
+		log.Printf("[Server ABORT] Client canceled or deadline exceeded: %v", err)
+
+		if err == context.Canceled {
+			return nil, status.Error(codes.Canceled, "client canceled the request")
+		} else if err == context.DeadlineExceeded {
+			return nil, status.Error(codes.DeadlineExceeded, "deadline exceeded by client")
+		}
+		return nil, status.Error(codes.Unknown, err.Error())
+
+	case <-workDone:
+		s.mu.Lock()
+		defer s.mu.Unlock()
+
+		s.count++
+		id := fmt.Sprintf("TASK-%d", s.count)
+		task := &pb.Task{
+			Id:          id,
+			Title:       req.GetTitle(),
+			Description: req.GetDescription(),
+			Completed:   false,
+		}
+		s.tasks[id] = task
+
+		log.Printf("[Unary] Created: %s (%s)", id, task.Title)
+		return &pb.CreateTaskResponse{Task: task}, nil
 	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.count++
-	id := fmt.Sprintf("TASK-%d", s.count)
-	task := &pb.Task{
-		Id:          id,
-		Title:       req.GetTitle(),
-		Description: req.GetDescription(),
-		Completed:   false,
-	}
-	s.tasks[id] = task
-
-	log.Printf("[Unary] Created: %s (%s)", id, task.Title)
-	return &pb.CreateTaskResponse{Task: task}, nil
+	return nil, status.Error(codes.Unknown, "unexpected server state")
 }
 
 // First Interceptor: Logging, Timing & Panic Recovery
@@ -57,19 +72,21 @@ func LoggingInterceptor(
 	handler grpc.UnaryHandler,
 ) (resp any, err error) {
 	start := time.Now()
-    defer func() {if r:= recover(); r!= nil {
-		log.Printf("[Panic Recovered] Method: %s | Error: %v", info.FullMethod,r)
-		err = status.Errorf(codes.Internal," internal server error")
-	}}()
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[Panic Recovered] Method: %s | Error: %v", info.FullMethod, r)
+			err = status.Errorf(codes.Internal, " internal server error")
+		}
+	}()
 	log.Printf("[REQ Start] Method: %s", info.FullMethod)
-	resp, err = handler(ctx,req)
+	resp, err = handler(ctx, req)
 	duration := time.Since(start)
-	if err != nil{
-		log.Printf("[REQ Failed] Method: %s | Duration: %v | Error: %v", info.FullMethod,duration,err)
+	if err != nil {
+		log.Printf("[REQ Failed] Method: %s | Duration: %v | Error: %v", info.FullMethod, duration, err)
 	} else {
-		log.Printf("[REQ Success] Method: %s | Duration: %v", info.FullMethod,duration)
+		log.Printf("[REQ Success] Method: %s | Duration: %v", info.FullMethod, duration)
 	}
-	return resp,err
+	return resp, err
 }
 
 func AuthInterceptor(
@@ -80,7 +97,7 @@ func AuthInterceptor(
 ) (any, error) {
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
-		return nil , status.Errorf(codes.Unauthenticated, "missing metadata headers")
+		return nil, status.Errorf(codes.Unauthenticated, "missing metadata headers")
 	}
 	authHeaders := md.Get("authorization")
 	if len(authHeaders) == 0 {
@@ -88,13 +105,12 @@ func AuthInterceptor(
 	}
 	token := authHeaders[0]
 	expectedToken := "Bearer secret-vault-token-123"
-	if !strings.EqualFold(token,expectedToken) {
-		return nil,status.Errorf(codes.PermissionDenied,"invalid token provided")
+	if !strings.EqualFold(token, expectedToken) {
+		return nil, status.Errorf(codes.PermissionDenied, "invalid token provided")
 
 	}
-	return handler(ctx,req)
+	return handler(ctx, req)
 }
-
 
 // 2. Server Streaming RPC
 func (s *server) StreamTasks(req *pb.StreamTasksRequest, stream pb.TodoService_StreamTasksServer) error {
@@ -184,10 +200,10 @@ func main() {
 	}
 
 	grpcServer := grpc.NewServer(
-	grpc.ChainUnaryInterceptor(
-		LoggingInterceptor,
-		AuthInterceptor,
-	),
+		grpc.ChainUnaryInterceptor(
+			LoggingInterceptor,
+			AuthInterceptor,
+		),
 	)
 	s := &server{
 		tasks: make(map[string]*pb.Task),
