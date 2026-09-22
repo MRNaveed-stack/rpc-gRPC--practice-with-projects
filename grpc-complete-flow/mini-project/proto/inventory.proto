@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+package inventory;
+
+option go_package = "mini-project/proto;pb";
+
+service InventoryService {
+  rpc AddItem (AddItemRequest) returns (AddItemResponse);
+  rpc GetItem (GetItemRequest) returns (Item);
+  rpc UpdateStock (UpdateStockRequest) returns (Item);
+}
+
+message Item {
+  int64 id = 1;
+  string sku = 2;
+  string name = 3;
+  int32 quantity = 4;
+  double price = 5;
+}
+
+message AddItemRequest {
+  string sku = 1;
+  string name = 2;
+  int32 quantity = 3;
+  double price = 4;
+}
+
+message AddItemResponse {
+  Item item = 1;
+}
+
+message GetItemRequest {
+  string sku = 1;
+}
+
+message UpdateStockRequest {
+  string sku = 1;
+  int32 quantity_delta = 2; // e.g. -2 when sold, +10 when restocked
+}
